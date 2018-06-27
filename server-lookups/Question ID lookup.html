@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <!-- The code in this document connects to the educational content store to progressively fetch:
+	the selected grade's course structure, then
+	the selected lesson's structure -->
+    <title>Question IDs in Content</title>
+	<style>
+        table, td, th {
+            border: solid 1px black;
+            padding: 3px;
+            vertical-align: text-top;
+        }
+
+        table {
+            border-collapse: collapse;
+        }
+
+        p {
+            margin: 2px;
+        }
+
+        br {
+            mso-data-placement: same-cell;
+        }
+
+        span.id {
+            color: indianred;
+        }
+
+        span.comment {
+            color: darkcyan;
+        }
+    </style>
+
+    <script src="jquery-3.1.1.min.js"></script>
+
+    <script>
+        var baseURL = "<... link to the internal content store ...>";
+		var grade = "", lesson = "";
+
+		/**
+		* Fetches the list of available courses and populates the corresponding listbox
+		*/
+        function getGrades() {
+            var allGradesJSONRequest = new XMLHttpRequest();
+            allGradesJSONRequest.open("GET", baseURL, true);
+
+            allGradesJSONRequest.onreadystatechange = function () {
+                if (allGradesJSONRequest.readyState == 4 && allGradesJSONRequest.status == 200) {
+                    gradesDropDown.empty();
+
+                    var grades = JSON.parse(allGradesJSONRequest.responseText);
+
+                    for (var c = 0; c < grades.length; c++) {
+                        var d = grades[c].name;
+                        if ("directory" == grades[c].type && d.toUpperCase() === d) {
+                            gradesDropDown.append("<option value='" + d + "'>" + d + "</option>")
+                        }
+                    }
+                }
+				
+				if (grade && gradesDropDown.find("option[value='" + grade + "']").length) {
+					gradesDropDown.val(grade);
+					getLessons(grade);
+				}
+				else {
+					gradesDropDown.val("");
+				}
+            };
+
+            allGradesJSONRequest.send();
+        }
+
+		/**
+		* Fetches the list of the selected grade's lessons and populates the corresponding listbox
+		*/
+        function getLessons(grade) {
+            var gradeJSONRequest = new XMLHttpRequest();
+            gradeJSONRequest.open("GET", baseURL + grade + "/", true);
+
+            gradeJSONRequest.onreadystatechange = function () {
+                if (gradeJSONRequest.readyState == 4 && gradeJSONRequest.status == 200) {
+                    lessonsDropDown.empty();
+
+                    var lessons = JSON.parse(gradeJSONRequest.responseText);
+
+                    for (var c = 0; c < lessons.length; c++) {
+                        var d = lessons[c].name;
+                        if ("directory" == lessons[c].type) {
+                            lessonsDropDown.append("<option value='" + d + "'>" + d + "</option>")
+                        }
+                    }
+                }
+				
+				if (lesson && lessonsDropDown.find("option[value='" + lesson + "']").length) {
+					lessonsDropDown.val(lesson);
+					getItems(grade, lesson);
+				}
+				else {
+					lessonsDropDown.val("");
+				}
+            };
+
+            gradeJSONRequest.send();
+        }
+
+        // the colors for the rows of the same activity
+        var colors = [
+            "#ffd3ff",
+            "#ffffd3",
+            "#ffe7ff",
+            "#e7ffff",
+            "#ffd3d3",
+            "#e7e7ff",
+            "#e7ffe7",
+            "#e7e7e7"
+        ];
+
+		/**
+		* Fetches the structure of the selected lesson
+		*/
+        function getItems(grade, lesson) {
+            var lessonXMLRequest = new XMLHttpRequest();
+            lessonXMLRequest.open("GET",
+                baseURL + "structures/" + grade + "/lessons/lesson_" + grade + "-" + lesson + ".xml",
+                true);
+
+            lessonXMLRequest.onreadystatechange = function () {
+                if (lessonXMLRequest.readyState == 4 && lessonXMLRequest.status == 200) {
+                    table.empty()
+                        .append("<thead><tr><th>Grade</th><th>Lesson</th><th>Item</th>"
+                            + "<th class='structure'>Item Structure</th>"
+                            + "<th>Question</th></tr></thead><tbody></tbody></tbody>"
+                        );
+					if (!structureCheckbox.prop("checked")) {
+						table.find(".structure").hide();
+					}
+					
+                    var tableBody = table.find("tbody");
+
+                    var contents = $($.parseXML(this.responseText)),
+                        items = contents.find("itemUID en");
+
+                    for (var i = 0; i < items.length; i++) {
+                        var lessonItemUID = $(items[i]).contents().text(),
+                            partsOfID = lessonItemUID.split("-");
+
+                        if (partsOfID[3].charAt(0) != 'a') {
+                            tableBody.append(
+                                "<tr id='" + lessonItemUID
+                                + "' style='vertical-align: top; "
+                                + "background-color: " + colors[parseInt(partsOfID[2]) % 8]
+                                + ";'></tr>");
+
+                            var row = $("#" + lessonItemUID); // the row just appended
+                            row.append("<td class='grade'>" + partsOfID[0] + "</td>"
+                                + "<td class='lesson'>" + partsOfID[1] + "</td>"
+                                + "<td class='item'>" + partsOfID[2] + "-" + partsOfID[3] + "</td>"
+                            );
+
+                            var itemXMLRequest = new XMLHttpRequest();
+                            itemXMLRequest["lessonItemUID"] = lessonItemUID;
+                            itemXMLRequest.open("GET",
+                                baseURL + grade + "/" + lesson + "/" + lessonItemUID + "/" + lessonItemUID + ".xml",
+                                true);
+
+                            itemXMLRequest.onreadystatechange = function () {
+                                if (this.readyState == 4 && this.status == 200) {
+                                    listSubmits(this);
+                                }
+                            };
+
+                            itemXMLRequest.send();
+                        }
+                    }
+					
+					downloadButton.show();
+                }
+            };
+
+            lessonXMLRequest.send();
+        }
+
+		
+		/**
+		* Generates a table with all the items and the question IDs in each item, with the branching order and conditions
+		*/
+        function listSubmits(xmlRequest) {
+            var row = $("#" + xmlRequest.lessonItemUID);
+
+            var contents = $(xmlRequest.responseXML),
+                steps = contents.find("steps").find("stepBlock, submit, specialAnswer"),
+                submits = contents.find("submit"),
+                numSubmits = submits.length;
+
+            row.append("<td rowspan='" + numSubmits + "' class='structure'></td>");
+            var structureCell = row.find("td.structure");
+            if (!structureCheckbox.prop("checked")) {
+                structureCell.hide();
+            }
+
+            row.append("<td class='question'></td>");
+            for (i = 1; i < numSubmits; i++) {
+                row.after("<tr style='" + row.attr("style") + "'><td></td><td></td><td></td><td class='question'></td></tr>")
+            }
+
+            var
+                questionCell = row.find("td.question");
+
+            for (var i = 0; i < steps.length; i++) {
+                if (steps[i].tagName === "submit") {
+                    var submitCondition = steps[i].getAttribute("if");
+
+                    structureCell.append(
+                        Array(($(steps[i]).parents().length - 3) * 2).join("&nbsp;")
+                        + (submitCondition
+                            ? "<span class='comment'>Only if " + submitCondition + "... </span>"
+                            : "")
+                        + "<span class='id'>"
+                        + steps[i].getElementsByTagName("question")[0].getAttribute("id")
+                        + "</span>"
+                        + "<br style='mso-data-placement: same-cell;'/>"
+                    );
+
+                    questionCell.append(steps[i].getElementsByTagName("question")[0].getAttribute("id"));
+                    questionCell = questionCell.parent().next().find("td.question");
+                }
+                else if (steps[i].tagName === "specialAnswer") {
+                    structureCell.append(
+                        Array(($(steps[i]).parents().length - 3) * 2).join("&nbsp;")
+                        + "<span class='comment'>Special answer "
+                        + "<span class='id'>"
+                        + steps[i].getAttribute("id")
+                        + "</span>"
+                        + ": " + $(steps[i]).text()
+                        + "</span>"
+                        + "<br style='mso-data-placement: same-cell;'/>"
+                    );
+                }
+                else if ($(steps[i]).find("submit").length > 0) {
+                    var condition = steps[i].getAttribute("if");
+
+                    structureCell.append(
+                        condition
+                            ? Array(($(steps[i]).parents().length - 3) * 2).join("&nbsp;")
+                            + "<span class='comment'>If "
+                            + condition
+                            + "</span>"
+                            + "<br style='mso-data-placement: same-cell;'/>"
+                            : ""
+                    );
+                }
+            }
+        }
+
+		/**
+		* Saves the table in an .xls file (although internally the file is still just an html containing the table)
+		*/
+        function downloadExcel() {
+            var tableClone = tableDiv.clone(true, true);
+
+            if (structureCheckbox.prop("checked")) {
+                tableClone.find(".structure br:last-child").remove();
+                tableClone.find(".structure:odd").css("background-color", "burlywood");
+            }
+            else {
+                tableClone.find(".structure").remove();
+            }
+
+            var link = document.createElement('a');
+            link.setAttribute("href",
+                "data:application/vnd.ms-excel,"
+                + encodeURIComponent(
+                    "<style>span.id{color:indianred;}span.comment{color:darkcyan;}</style>"
+                    + tableClone.html()
+                )
+            );
+            link.setAttribute("download", gradesDropDown.val() + "-" + lessonsDropDown.val() + ".xls");
+            link.style.display = "none";
+            link.click();
+        }
+
+        var gradesDropDown,
+            lessonsDropDown,
+            structureCheckbox,
+            downloadButton,
+            table,
+            tableDiv;
+
+		/**
+		* Main jquery callback, initializes the variables and controls
+		*/
+        $(document).ready(function () {
+            gradesDropDown = $("#grades");
+            lessonsDropDown = $("#lessons");
+            structureCheckbox = $("#structure");
+            downloadButton = $("#download");
+            table = $("#table");
+            tableDiv = $("#tableDiv");
+
+			var urlParams = new URLSearchParams(document.location.search.slice(1));
+			grade = urlParams.get("grade"),
+			lesson = urlParams.get("lesson");
+			
+            getGrades();
+
+            gradesDropDown
+                .on("change", function () {
+                    grade = gradesDropDown.find(":selected").val();
+					getLessons(grade);
+					
+					urlParams.set("grade", grade);
+					urlParams.delete("lesson");
+					document.location.search = "?" + urlParams.toString();
+                });
+            lessonsDropDown
+                .on("change", function () {
+					lesson = lessonsDropDown.find(":selected").val();
+                    getItems(gradesDropDown.find(":selected").val(), lesson);
+					
+					urlParams.set("lesson", lesson);
+					window.history.pushState("", "", "Question IDs.html?" + urlParams.toString()); // doesn't reload the page while updating the address bar
+                });
+				
+            structureCheckbox
+                .click(function () {
+                    var structureColumn = $(".structure");
+                    if (structureCheckbox.prop("checked")) {
+                        structureColumn.show();
+                    }
+                    else {
+                        structureColumn.hide();
+                    }
+                });
+            downloadButton
+                .hide()
+                .click(downloadExcel);
+        });
+    </script>
+</head>
+
+<body>
+<form>
+    <div>
+        <label for="grades">Select grade:</label> <select id="grades"></select> <br/>
+        <label for="lessons">Select lesson:</label> <select id="lessons"></select> <br/>
+        <input type="checkbox" id="structure" checked/> <label for="structure">Show structure</label>
+        <input type="button" id="download" value="Download file"/>
+    </div>
+</form>
+
+<div id="tableDiv">
+    <table id="table"></table>
+</div>
+
+</body>
+</html>
